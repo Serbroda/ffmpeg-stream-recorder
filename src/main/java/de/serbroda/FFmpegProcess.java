@@ -6,6 +6,9 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 public class FFmpegProcess {
@@ -33,20 +36,21 @@ public class FFmpegProcess {
         return process != null && process.isAlive();
     }
 
-    public void startAsync(final List<String> commandArgs) {
-        startAsync(commandArgs, null);
+    public Future<Integer> startAsync(final List<String> commandArgs) {
+        return startAsync(commandArgs, null);
     }
 
-    public void startAsync(final List<String> commandArgs, final FFmpegProcessOptions options) {
-        final FFmpegProcess self = this;
-        thread = new Thread(() -> {
+    public Future<Integer> startAsync(final List<String> commandArgs, final FFmpegProcessOptions options) {
+        ExecutorService executorService = Executors.newSingleThreadExecutor();
+
+        return executorService.submit(() -> {
             try {
-                self.start(commandArgs, options);
+                start(commandArgs, options);
             } catch (IOException | InterruptedException e) {
                 e.printStackTrace();
             }
+            return getProcess().map(p -> p.exitValue()).orElse(-1);
         });
-        thread.start();
     }
 
     public void start(final List<String> commandArgs) throws IOException, InterruptedException {

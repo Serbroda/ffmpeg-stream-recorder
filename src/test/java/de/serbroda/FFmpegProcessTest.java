@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 
 public class FFmpegProcessTest {
 
@@ -18,7 +20,7 @@ public class FFmpegProcessTest {
     public TemporaryFolder tempFolder = new TemporaryFolder();
 
     @Test
-    public void testRecord() throws IOException {
+    public void testRecord() throws IOException, ExecutionException, InterruptedException {
         List<String> commandArguments = new LinkedList<>();
         commandArguments.add(FFMPEG_EXECUTABLE);
         commandArguments.add("-y");
@@ -37,13 +39,18 @@ public class FFmpegProcessTest {
         FFmpegProcessOptions options = new FFmpegProcessOptions();
         options.setWorkDirectory(createTestFolderAndGetAbsolutePath("test"));
         FFmpegProcess process = new FFmpegProcess(FFMPEG_EXECUTABLE);
-        process.startAsync(commandArguments, options);
+        Future<Integer> exitCode = process.startAsync(commandArguments, options);
 
-        waitSeconds(20);
+        int counter = 0;
+        while(!exitCode.isDone()) {
+            counter++;
+            waitSeconds(1);
+            if(counter > 10) {
+                process.stop();
+            }
+        }
 
-        process.stop();
-
-        System.out.println("Finished");
+        System.out.println("Finished with exit code " + exitCode.get());
     }
 
     private String createTestFolderAndGetAbsolutePath(String folder) throws IOException {
