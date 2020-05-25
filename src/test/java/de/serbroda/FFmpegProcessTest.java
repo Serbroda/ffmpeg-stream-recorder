@@ -53,6 +53,16 @@ public class FFmpegProcessTest {
         System.out.println("Finished with exit code " + exitCode.get());
     }
 
+    @Test
+    public void testRecorder() throws IOException, InterruptedException {
+        FFmpegRecorder recorder = new FFmpegRecorder();
+        recorder.startRecord(TEST_URL, createTestFolderAndGetAbsolutePath("test"), "output.mp4");
+        waitSeconds(30);
+        recorder.stopAndFinish();
+
+        System.out.println("Finished");
+    }
+
     private String createTestFolderAndGetAbsolutePath(String folder) throws IOException {
         return tempFolder.newFolder(folder).toPath().toFile().toString();
     }
