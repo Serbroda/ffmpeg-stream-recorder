@@ -4,23 +4,18 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
-import java.nio.file.Paths;
-import java.text.SimpleDateFormat;
-import java.util.*;
+import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 public class FFmpegProcess {
 
     public static final String DEFAULT_FFMPEG_EXECUTABLE = "ffmpeg";
 
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyyMMddHHmmss");
-
     protected final String ffmpegExecutable;
 
     private Thread thread;
     private Process process;
-    private String currentWorkDirectory;
-
 
     public FFmpegProcess() {
         this(DEFAULT_FFMPEG_EXECUTABLE);
@@ -34,83 +29,47 @@ public class FFmpegProcess {
         return Optional.ofNullable(process);
     }
 
-    public void startRecordAsync(String url) {
-        startRecordAsync(url, System.getProperty("user.dir"));
+    public boolean isRunning() {
+        return process != null && process.isAlive();
     }
 
-    public void startRecordAsync(String url, String workRootDirectory) {
-        thread = new Thread(() -> startRecord(url, workRootDirectory));
+    public void startAsync(final List<String> commandArgs) {
+        startAsync(commandArgs, null);
+    }
+
+    public void startAsync(final List<String> commandArgs, final FFmpegProcessOptions options) {
+        final FFmpegProcess self = this;
+        thread = new Thread(() -> {
+            try {
+                self.start(commandArgs, options);
+            } catch (IOException | InterruptedException e) {
+                e.printStackTrace();
+            }
+        });
         thread.start();
     }
 
-    public void startRecord(String url) {
-        startRecord(url, System.getProperty("user.dir"));
+    public void start(final List<String> commandArgs) throws IOException, InterruptedException {
+        start(commandArgs, null);
     }
 
-    public void startRecord(String url, String workRootDirectory) {
-        currentWorkDirectory = Paths.get(workRootDirectory, DATE_FORMAT.format(new Date())).toAbsolutePath().toString();
+    public void start(final List<String> commandArgs, final FFmpegProcessOptions options) throws IOException, InterruptedException {
+        assertState();
 
-        if(!new File(currentWorkDirectory).exists()) {
-            new File(currentWorkDirectory).mkdir();
+        if (commandArgs.isEmpty()) {
+            commandArgs.add(ffmpegExecutable);
+        } else if (!commandArgs.get(0).endsWith("ffmpeg") && !commandArgs.get(0).endsWith("ffmpeg.exe")) {
+            commandArgs.add(0, ffmpegExecutable);
         }
 
-        List<String> commandArguments = new LinkedList<>();
-        commandArguments.add(ffmpegExecutable);
-        commandArguments.add("-y");
-        commandArguments.add("-i");
-        commandArguments.add(url);
-        commandArguments.add("-c");
-        commandArguments.add("copy");
-        commandArguments.add("-f");
-        commandArguments.add("segment");
-        commandArguments.add("-segment_list");
-        commandArguments.add("out.ffcat");
-        commandArguments.add("seg_%03d.ts");
+        FFmpegProcessOptions ensuredOptions = ensureDefaultOptions(options);
 
-        try {
-            runCMD(commandArguments.toArray(new String[0]), currentWorkDirectory);
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+        if (ensuredOptions.isPrintMessages()) {
+            System.out.println("Standard output: " + String.join(" ", commandArgs));
         }
-    }
 
-    public void concat(String segmentList, String sourceDirectory, String output) {
-        List<String> commandArguments = new LinkedList<>();
-        commandArguments.add(ffmpegExecutable);
-        commandArguments.add("-f");
-        commandArguments.add("concat");
-        commandArguments.add("-i");
-        commandArguments.add(segmentList);
-        commandArguments.add("-c");
-        commandArguments.add("copy");
-        commandArguments.add(output);
-
-        try {
-            runCMD(commandArguments.toArray(new String[0]), currentWorkDirectory);
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void stopRecord() {
-        if (process == null || !process.isAlive()) {
-            return;
-        }
-        process.destroy();
-        if (thread != null) {
-            thread.stop();
-        }
-    }
-
-
-    private void runCMD(String[] commandArgs, String workDirectory) throws IOException, InterruptedException {
-        System.out.println("Standard output: " + String.join(" ", commandArgs));
         ProcessBuilder processBuilder = new ProcessBuilder(commandArgs);
-        processBuilder.directory(new File(workDirectory));
+        processBuilder.directory(new File(ensuredOptions.getWorkDirectory()));
         process = processBuilder.start();
 
         // Get input streams
@@ -126,8 +85,9 @@ public class FFmpegProcess {
         boolean isErrorOut = true;
         boolean isErrorError = true;
 
-
-        System.out.println("Read command ");
+        if (ensuredOptions.isPrintMessages()) {
+            System.out.println("Read command ");
+        }
         while (process.isAlive()) {
             //Read the stdOut
 
@@ -140,31 +100,68 @@ public class FFmpegProcess {
                 if (isOutReady) {
                     line = stdInput.readLine();
                     isErrorOut = false;
-                    System.out.println("=====================================================================================" + line + newLineCharacter);
+                    if (ensuredOptions.isPrintMessages()) {
+                        System.out.println("=====================================================================================" + line + newLineCharacter);
+                    }
                 }
                 isErrorReady = stdError.ready();
                 //System.out.println("ERROR READY " + isErrorReady);
                 if (isErrorReady) {
                     line = stdError.readLine();
                     isErrorError = false;
-                    System.out.println("ERROR::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::" + line + newLineCharacter);
+                    if (ensuredOptions.isPrintMessages()) {
+                        System.out.println("ERROR::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::" + line + newLineCharacter);
+                    }
 
                 }
                 isProcessAlive = process.isAlive();
                 //System.out.println("Process Alive " + isProcessAlive);
                 if (!isProcessAlive) {
-                    System.out.println(":::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::: Process DIE " + line + newLineCharacter);
+                    if (ensuredOptions.isPrintMessages()) {
+                        System.out.println(":::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::: Process DIE " + line + newLineCharacter);
+                    }
                     line = null;
                     isErrorError = false;
-                    process.waitFor(1000, TimeUnit.MILLISECONDS);
+                    process.waitFor();
                 }
 
             } while (line != null);
 
             //Nothing else to read, lets pause for a bit before trying again
-            System.out.println("PROCESS WAIT FOR");
+            if (ensuredOptions.isPrintMessages()) {
+                System.out.println("PROCESS WAIT FOR");
+            }
             process.waitFor(100, TimeUnit.MILLISECONDS);
         }
-        System.out.println("Command finished");
+        if (ensuredOptions.isPrintMessages()) {
+            System.out.println("Command finished");
+        }
+    }
+
+    public void stop() {
+        if (process != null) {
+            process.destroy();
+        }
+        if (thread != null) {
+            thread.stop();
+        }
+    }
+
+    private void assertState() {
+        if (isRunning()) {
+            throw new IllegalStateException("Process is already running. Create a new instance of "
+                    + this.getClass().getSimpleName() + " to record multiple streams.");
+        }
+    }
+
+    private FFmpegProcessOptions ensureDefaultOptions(FFmpegProcessOptions options) {
+        FFmpegProcessOptions returnOptions = options;
+        if (returnOptions == null) {
+            returnOptions = new FFmpegProcessOptions();
+        }
+        if (returnOptions.getWorkDirectory() == null) {
+            returnOptions.setWorkDirectory(System.getProperty("user.dir"));
+        }
+        return returnOptions;
     }
 }
