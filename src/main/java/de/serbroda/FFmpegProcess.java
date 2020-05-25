@@ -17,7 +17,7 @@ public class FFmpegProcess {
 
     protected final String ffmpegExecutable;
 
-    private Thread thread;
+    private ExecutorService executorService;
     private Process process;
 
     public FFmpegProcess() {
@@ -41,8 +41,9 @@ public class FFmpegProcess {
     }
 
     public Future<Integer> startAsync(final List<String> commandArgs, final FFmpegProcessOptions options) {
-        ExecutorService executorService = Executors.newSingleThreadExecutor();
+        assertThradState();
 
+        executorService = Executors.newSingleThreadExecutor();
         return executorService.submit(() -> {
             try {
                 start(commandArgs, options);
@@ -58,7 +59,7 @@ public class FFmpegProcess {
     }
 
     public void start(final List<String> commandArgs, final FFmpegProcessOptions options) throws IOException, InterruptedException {
-        assertState();
+        assertProcessState();
 
         if (commandArgs.isEmpty()) {
             commandArgs.add(ffmpegExecutable);
@@ -146,13 +147,20 @@ public class FFmpegProcess {
         if (process != null) {
             process.destroy();
         }
-        if (thread != null) {
-            thread.stop();
+        if (executorService != null) {
+            executorService.shutdownNow();
         }
     }
 
-    private void assertState() {
-        if (isRunning()) {
+    private void assertThradState() {
+        if (executorService != null && !executorService.isTerminated()) {
+            throw new IllegalStateException("Process is already running. Create a new instance of "
+                    + this.getClass().getSimpleName() + " to record multiple streams.");
+        }
+    }
+
+    private void assertProcessState() {
+        if (process != null && process.isAlive()) {
             throw new IllegalStateException("Process is already running. Create a new instance of "
                     + this.getClass().getSimpleName() + " to record multiple streams.");
         }
